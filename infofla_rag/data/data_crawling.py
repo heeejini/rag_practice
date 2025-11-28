@@ -119,10 +119,7 @@ def wait_dom_ready(driver, timeout=15):
     )
 
 def safe_get(driver, url, timeout=30, retries=1, sleep_between=1.0):
-    """
-    페이지 이동의 안정 래퍼: 타임아웃/재시도/강제중단(window.stop) 포함
-    timeout: driver.get 의 타임아웃(초)
-    """
+
     last_err = None
     for attempt in range(retries + 1):
         try:
@@ -197,8 +194,6 @@ def main():
 
     driver = setup_driver()
     wait = WebDriverWait(driver, 15)
-
-    # === [핵심] 기사별 하드 타임아웃(초) ===
     ITEM_MAX_SEC = 40  # 필요시 60~90으로 조정
 
     try:
