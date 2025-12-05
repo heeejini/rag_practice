@@ -58,13 +58,10 @@ def search(
     query: str,
     topk: int = 3,
 ):
-    """
-    Qdrant에서 query_points / search 호출하고,
-    항상 'List[ScoredPoint]' 형태로 반환하도록 정규화하는 래퍼.
-    """
+
     qvec = embedder.encode([query])[0].tolist()
 
-    # 1) 최신 Query API 우선 사용
+
     if hasattr(client, "query_points"):
         res = client.query_points(
             collection_name=collection,
@@ -72,7 +69,6 @@ def search(
             limit=topk,
             with_payload=True,
         )
-    # 2) 구버전 fallback: search 메서드
     elif hasattr(client, "search"):
         res = client.search(
             collection_name=collection,
@@ -86,10 +82,7 @@ def search(
             "qdrant-client 버전을 1.10.0 이상으로 업데이트 해주세요."
         )
 
-    # 🔑 여기서 핵심: QueryResponse(points=[...]) → points 리스트만 꺼내기
-    # query_points 결과: QueryResponse(points=[ScoredPoint, ...])
-    # search 결과: 보통 list[ScoredPoint]
     if hasattr(res, "points"):
-        return res.points  # List[ScoredPoint]
+        return res.points  
     else:
-        return res         # 이미 리스트인 경우
+        return res       

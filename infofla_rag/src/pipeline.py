@@ -76,7 +76,7 @@ class RAGPipeline:
 
     # 3) search
     def retrieve(self, query: str, topk: int = 3):
-        return search(
+        hits = search(
             client=self.client,
             collection=self.qdrant_cfg.collection,
             embedder=self.embedder,
@@ -84,6 +84,10 @@ class RAGPipeline:
             topk=topk,
         )
 
+        print(f"[RAG] query='{query}' → hits={len(hits)}")
+        if hits:
+            print("[RAG] first payload:", hits[0].payload.get("text", "")[:200])
+        return hits
     # 4) build context + LLM generate (RAG)
     #    → (answer, rag_ctx, stats) 반환
     def answer_rag(

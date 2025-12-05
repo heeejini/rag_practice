@@ -22,11 +22,15 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      - HF_TOKEN=${HF_TOKEN}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
     command: >
       --model K-intelligence/Midm-2.0-Base-Instruct
       --host 0.0.0.0
       --port 8000
+      --gpu-memory-utilization 0.85
+    volumes:
+      - ./vllm_cache:/root/.cache/huggingface      
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -41,6 +45,9 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       VLLM_API_BASE: http://vllm:8000
+      INDEX_SRC_DIR: /app/data/news_articles_preprocessing
+    volumes:
+      - ./data/news_articles_preprocessing:/app/data/news_articles_preprocessing:ro
     ports:
       - "9000:9000"
     restart: unless-stopped

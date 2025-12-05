@@ -1,21 +1,19 @@
-# pip install selenium webdriver-manager beautifulsoup4
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from urllib3.exceptions import ReadTimeoutError
-from selenium import webdriver
 
-import sys, os, re, time, atexit
+import sys
+import os
+import re
+import time
+import atexit
 
-# =========================
-# DualLogger (안전 종료 버전)
-# =========================
 class DualLogger:
     def __init__(self, filename: str):
         self._orig_stdout = sys.stdout
@@ -24,12 +22,10 @@ class DualLogger:
         self._closed = False
 
     def write(self, message: str):
-        # 콘솔 출력 (실패 무시)
         try:
             self._orig_stdout.write(message)
         except Exception:
             pass
-        # 파일 기록 (닫히지 않았을 때만)
         if not self._closed and getattr(self, "log", None) and not self.log.closed:
             try:
                 self.log.write(message)
@@ -37,12 +33,10 @@ class DualLogger:
                 pass
 
     def flush(self):
-        # 콘솔 flush
         try:
             self._orig_stdout.flush()
         except Exception:
             pass
-        # 파일 flush (닫히지 않았을 때만)
         if not self._closed and getattr(self, "log", None) and not self.log.closed:
             try:
                 self.log.flush()
@@ -53,7 +47,6 @@ class DualLogger:
         if self._closed:
             return
         self._closed = True
-        # stdout 원복 → 파일 닫기
         try:
             if sys.stdout is self:
                 sys.stdout = self._orig_stdout
@@ -71,25 +64,17 @@ class DualLogger:
         self.log = None
 
 
-# 콘솔 + 파일 동시 출력 세팅
 logger = DualLogger("news_output.txt")
 sys.stdout = logger
-atexit.register(logger.close)  # 종료 안전망
+atexit.register(logger.close) 
 
-# =========================
-# 유틸
-# =========================
+
 def slugify(text, maxlen=80):
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r'[\\/:*?"<>|]', "_", text)
     text = text[:maxlen].rstrip("._ ")
     return text or "article"
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 
 def setup_driver():
     options = webdriver.ChromeOptions()
@@ -101,12 +86,10 @@ def setup_driver():
     options.add_argument("--remote-debugging-port=9222")
     options.add_argument("--window-size=1920,1080")
 
-    # Chromium binary 명시
     options.binary_location = "/usr/bin/chromium-browser"
 
-    # webdriver_manager 대신, 시스템에 설치된 chromedriver 사용
     driver = webdriver.Chrome(
-        service=Service("/usr/bin/chromedriver"),  # 위에서 which chromedriver 결과로 교체
+        service=Service("/usr/bin/chromedriver"),
         options=options,
     )
     return driver
@@ -141,9 +124,7 @@ def safe_get(driver, url, timeout=30, retries=1, sleep_between=1.0):
     return False, last_err
 
 def extract_body_text(driver, soft_timeout_sec=10):
-    """
-    본문 추출에도 소프트 타임아웃 적용: 오래 끌면 빈 문자열 반환하고 상위 로직에서 스킵 판단.
-    """
+
     t0 = time.time()
     selectors = [
         'div[class*="article-body"]',
@@ -164,7 +145,6 @@ def extract_body_text(driver, soft_timeout_sec=10):
         except Exception:
             continue
 
-    # BeautifulSoup fallback
     try:
         if time.time() - t0 <= soft_timeout_sec:
             soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -184,9 +164,6 @@ def extract_body_text(driver, soft_timeout_sec=10):
         pass
     return ""
 
-# =========================
-# 메인
-# =========================
 def main():
     HOME = "https://infofla.com/ko/home"
     SAVE_DIR = "news_articles"
@@ -255,7 +232,8 @@ def main():
             if remaining <= 0:
                 print("[스킵] 네비게이션 후 하드 타임아웃 소진")
                 try:
-                    driver.execute_script("window.stop();"); driver.get("about:blank")
+                    driver.execute_script("window.stop();")
+                    driver.get("about:blank")
                 except Exception:
                     pass
                 continue
@@ -268,7 +246,8 @@ def main():
             if elapsed > ITEM_MAX_SEC:
                 print(f"[스킵] 본문 추출 중 하드 타임아웃 초과({elapsed:.1f}s > {ITEM_MAX_SEC}s)")
                 try:
-                    driver.execute_script("window.stop();"); driver.get("about:blank")
+                    driver.execute_script("window.stop();")
+                    driver.get("about:blank")
                 except Exception:
                     pass
                 continue
@@ -291,7 +270,8 @@ def main():
 
             # 다음 기사에 영향 없게 정리
             try:
-                driver.execute_script("window.stop();"); driver.get("about:blank")
+                driver.execute_script("window.stop();")
+                driver.get("about:blank")
             except Exception:
                 pass
 
@@ -305,7 +285,6 @@ def main():
             if isinstance(sys.stdout, DualLogger):
                 sys.stdout.close()
             else:
-                # 혹시 logger 변수를 잡아뒀다면 사용
                 try:
                     logger.close()
                 except Exception:

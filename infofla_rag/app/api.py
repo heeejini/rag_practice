@@ -1,22 +1,19 @@
 # app/api.py
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import time
+import os
+
 from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
-import os 
+from src.qdrant import ensure_or_recreate_collection
+
 app = FastAPI(title="InfoFla RAG API", version="1.0.0")
 
-# -------------------------------
-# 1) 템플릿 설정
-# -------------------------------
 templates = Jinja2Templates(directory="app/templates")
 
-# -------------------------------
-# 2) 파이프라인 초기화
-# -------------------------------
 chunk_cfg = ChunkConfig(
     chunk_size=2000,
     overlap=500,
@@ -27,14 +24,13 @@ qdrant_cfg = QdrantConfig(
     host=os.getenv("QDRANT_HOST", "qdrant"),
     port=int(os.getenv("QDRANT_PORT", "6333")),
     collection="news_chunks",
-    recreate=False,
+    recreate=False,  # API 서버에서는 기본적으로 컬렉션 삭제 X
 )
 
 embed_cfg = EmbedConfig(
     model_name="Alibaba-NLP/gte-multilingual-base",
     batch_size=256,
 )
-
 
 llm_cfg = LLMConfig(
     model_id="K-intelligence/Midm-2.0-Base-Instruct",
@@ -52,9 +48,11 @@ pipe = RAGPipeline(
     llm_cfg=llm_cfg,
 )
 
-# -------------------------------
-# 3) JSON용 스키마 (POST /rag)
-# -------------------------------
+INDEX_SRC_DIR_DEFAULT = os.getenv(
+    "INDEX_SRC_DIR",
+    "/app/data/news_articles_preprocessing",
+)
+
 class RAGRequest(BaseModel):
     query: str
     topk: int = 3
@@ -69,23 +67,26 @@ class RAGResponse(BaseModel):
     total_latency_ms: float
 
 
-# -------------------------------
-# 4) 헬스체크
-# -------------------------------
+class IndexRequest(BaseModel):
+    src_dir: str | None = None
+    pattern: str = "*.txt"
+    recreate: bool = False
+
+
+class IndexResponse(BaseModel):
+    indexed_chunks: int
+    src_dir: str
+    recreate: bool
+
+
 @app.get("/health")
 def health():
     backend = "vllm" if llm_cfg.use_vllm else "hf"
     return {"status": "ok", "backend": backend}
 
 
-# -------------------------------
-# 5) HTML UI: GET /
-# -------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """
-    처음 접속 시 빈 폼 + 기본 상태.
-    """
     backend = "vllm" if llm_cfg.use_vllm else "hf"
     return templates.TemplateResponse(
         "index.html",
@@ -104,9 +105,6 @@ async def index(request: Request):
     )
 
 
-# -------------------------------
-# 6) HTML UI: 폼 제출 (POST /chat)
-# -------------------------------
 @app.post("/chat", response_class=HTMLResponse)
 async def chat(
     request: Request,
@@ -114,9 +112,6 @@ async def chat(
     use_rag: bool = Form(False),
     topk: int = Form(3),
 ):
-    """
-    index.html 폼에서 넘어온 값으로 RAG/No-RAG 수행.
-    """
     t0 = time.time()
     answer = ""
     rag_ctx = None
@@ -128,28 +123,26 @@ async def chat(
     try:
         if use_rag:
             hits = pipe.retrieve(query, topk=topk)
-            # 현재 pipeline.answer_rag 가 (answer, rag_ctx, stats) 를 반환한다고 가정
             result = pipe.answer_rag(
                 query,
                 hits,
                 max_chunks=3,
                 max_each=800,
             )
-            # (answer, rag_ctx, stats) 또는 (answer, rag_ctx) 방어적으로 처리
             if len(result) == 3:
                 ans, ctx, stats = result
-                backend = stats.get("llm_backend", backend)
-                llm_latency_ms = stats.get("llm_latency", 0.0) * 1000
+                backend = stats.llm_backend
+                llm_latency_ms = stats.llm_latency * 1000
             else:
                 ans, ctx = result
             answer = ans
             rag_ctx = ctx
         else:
             result = pipe.answer_no_rag(query)
-            if len(result) == 2:
+            if isinstance(result, tuple) and len(result) == 2:
                 ans, stats = result
-                backend = stats.get("llm_backend", backend)
-                llm_latency_ms = stats.get("llm_latency", 0.0) * 1000
+                backend = stats.llm_backend
+                llm_latency_ms = stats.llm_latency * 1000
             else:
                 ans = result
             answer = ans
@@ -178,9 +171,6 @@ async def chat(
     )
 
 
-# -------------------------------
-# 7) JSON RAG API (POST /rag)
-# -------------------------------
 @app.post("/rag", response_model=RAGResponse)
 def rag_endpoint(req: RAGRequest):
     t0 = time.time()
@@ -195,18 +185,18 @@ def rag_endpoint(req: RAGRequest):
         )
         if len(result) == 3:
             answer, rag_ctx, stats = result
-            backend = stats.get("llm_backend", "unknown")
-            llm_latency = stats.get("llm_latency", (time.time() - t0))
+            backend = stats.llm_backend
+            llm_latency = stats.llm_latency
         else:
             answer, rag_ctx = result
             backend = "unknown"
             llm_latency = (time.time() - t0)
     else:
         result = pipe.answer_no_rag(req.query)
-        if len(result) == 2:
+        if isinstance(result, tuple) and len(result) == 2:
             answer, stats = result
-            backend = stats.get("llm_backend", "unknown")
-            llm_latency = stats.get("llm_latency", (time.time() - t0))
+            backend = stats.llm_backend
+            llm_latency = stats.llm_latency
             rag_ctx = None
         else:
             answer = result
@@ -221,4 +211,45 @@ def rag_endpoint(req: RAGRequest):
         backend=backend,
         llm_latency_ms=llm_latency * 1000,
         total_latency_ms=(t1 - t0) * 1000,
+    )
+
+
+@app.post("/admin/build_index", response_model=IndexResponse)
+def build_index_endpoint(req: IndexRequest):
+
+    src_dir = req.src_dir or INDEX_SRC_DIR_DEFAULT
+
+    if not os.path.isdir(src_dir):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source directory not found: {src_dir}",
+        )
+
+    # recreate 옵션 켜면 컬렉션 다시 생성
+    if req.recreate:
+        dim = pipe.embedder.get_sentence_embedding_dimension()
+        ensure_or_recreate_collection(
+            client=pipe.client,
+            collection=pipe.qdrant_cfg.collection,
+            dim=dim,
+            recreate=True,
+        )
+
+    # 1) chunking
+    chunks = pipe.chunk(src_dir=src_dir, pattern=req.pattern)
+    n_chunks = len(chunks)
+    if n_chunks == 0:
+        return IndexResponse(
+            indexed_chunks=0,
+            src_dir=src_dir,
+            recreate=req.recreate,
+        )
+
+    # 2) upsert
+    pipe.upsert(chunks)
+
+    return IndexResponse(
+        indexed_chunks=n_chunks,
+        src_dir=src_dir,
+        recreate=req.recreate,
     )

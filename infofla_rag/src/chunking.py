@@ -1,8 +1,8 @@
 # chunking.py
-import os, re, glob
+import os
+import re
+import glob
 from typing import List, Dict, Optional
-# LangChain 최신 분할기 패키지 권장
-# pip install langchain-text-splitters
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def split_by_paragraph(text: str) -> List[str]:
