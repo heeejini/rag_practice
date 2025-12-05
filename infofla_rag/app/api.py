@@ -10,6 +10,14 @@ from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
 from src.qdrant import ensure_or_recreate_collection
 
+import logging
+from src.logging_config import setup_logging
+
+
+setup_logging()
+logger = logging.getLogger("rag.api")
+
+
 app = FastAPI(title="InfoFla RAG API", version="1.0.0")
 
 templates = Jinja2Templates(directory="app/templates")
@@ -174,58 +182,86 @@ async def chat(
 @app.post("/rag", response_model=RAGResponse)
 def rag_endpoint(req: RAGRequest):
     t0 = time.time()
-
-    if req.use_rag:
-        hits = pipe.retrieve(req.query, topk=req.topk)
-        result = pipe.answer_rag(
-            req.query,
-            hits,
-            max_chunks=3,
-            max_each=800,
-        )
-        if len(result) == 3:
-            answer, rag_ctx, stats = result
-            backend = stats.llm_backend
-            llm_latency = stats.llm_latency
-        else:
-            answer, rag_ctx = result
-            backend = "unknown"
-            llm_latency = (time.time() - t0)
-    else:
-        result = pipe.answer_no_rag(req.query)
-        if isinstance(result, tuple) and len(result) == 2:
-            answer, stats = result
-            backend = stats.llm_backend
-            llm_latency = stats.llm_latency
-            rag_ctx = None
-        else:
-            answer = result
-            backend = "unknown"
-            llm_latency = (time.time() - t0)
-            rag_ctx = None
-
-    t1 = time.time()
-    return RAGResponse(
-        answer=answer,
-        context=rag_ctx,
-        backend=backend,
-        llm_latency_ms=llm_latency * 1000,
-        total_latency_ms=(t1 - t0) * 1000,
+    logger.info(
+        "[/rag] request received | query=%r | use_rag=%s | topk=%d",
+        req.query[:200],  # 너무 길면 잘라서
+        req.use_rag,
+        req.topk,
     )
 
+    try:
+        if req.use_rag:
+            hits = pipe.retrieve(req.query, topk=req.topk)
+            result = pipe.answer_rag(
+                req.query,
+                hits,
+                max_chunks=3,
+                max_each=800,
+            )
+            if len(result) == 3:
+                answer, rag_ctx, stats = result
+                backend = stats.llm_backend
+                llm_latency = stats.llm_latency
+            else:
+                answer, rag_ctx = result
+                backend = "unknown"
+                llm_latency = (time.time() - t0)
+        else:
+            result = pipe.answer_no_rag(req.query)
+            if isinstance(result, tuple) and len(result) == 2:
+                answer, stats = result
+                backend = stats.llm_backend
+                llm_latency = stats.llm_latency
+                rag_ctx = None
+            else:
+                answer = result
+                backend = "unknown"
+                llm_latency = (time.time() - t0)
+                rag_ctx = None
+
+        t1 = time.time()
+        total_latency = t1 - t0
+
+        logger.info(
+            "[/rag] response | backend=%s | llm_latency=%.3fs | total_latency=%.3fs",
+            backend,
+            llm_latency,
+            total_latency,
+        )
+
+        return RAGResponse(
+            answer=answer,
+            context=rag_ctx,
+            backend=backend,
+            llm_latency_ms=llm_latency * 1000,
+            total_latency_ms=total_latency * 1000,
+        )
+
+    except Exception:
+        logger.exception("[/rag] unhandled exception")
+        # FastAPI가 적절한 500 응답을 만들 수 있게 예외 다시 던짐
+        raise
 
 @app.post("/admin/build_index", response_model=IndexResponse)
 def build_index_endpoint(req: IndexRequest):
-
     src_dir = req.src_dir or INDEX_SRC_DIR_DEFAULT
+    logger.info(
+        "[/admin/build_index] start | src_dir=%s | pattern=%s | recreate=%s",
+        src_dir,
+        req.pattern,
+        req.recreate,
+    )
 
     if not os.path.isdir(src_dir):
+        logger.error(
+            "[/admin/build_index] source directory not found: %s",
+            src_dir,
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Source directory not found: {src_dir}",
         )
 
-    # recreate 옵션 켜면 컬렉션 다시 생성
     if req.recreate:
         dim = pipe.embedder.get_sentence_embedding_dimension()
         ensure_or_recreate_collection(
@@ -234,19 +270,33 @@ def build_index_endpoint(req: IndexRequest):
             dim=dim,
             recreate=True,
         )
+        logger.info(
+            "[/admin/build_index] collection recreated | collection=%s | dim=%d",
+            pipe.qdrant_cfg.collection,
+            dim,
+        )
 
-    # 1) chunking
     chunks = pipe.chunk(src_dir=src_dir, pattern=req.pattern)
     n_chunks = len(chunks)
+
     if n_chunks == 0:
+        logger.warning(
+            "[/admin/build_index] no chunks found | src_dir=%s | pattern=%s",
+            src_dir,
+            req.pattern,
+        )
         return IndexResponse(
             indexed_chunks=0,
             src_dir=src_dir,
             recreate=req.recreate,
         )
 
-    # 2) upsert
     pipe.upsert(chunks)
+    logger.info(
+        "[/admin/build_index] finished | indexed_chunks=%d | src_dir=%s",
+        n_chunks,
+        src_dir,
+    )
 
     return IndexResponse(
         indexed_chunks=n_chunks,

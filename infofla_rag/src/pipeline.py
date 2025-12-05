@@ -8,8 +8,10 @@ from .chunking import chunk_dir_to_list
 from .qdrant import get_client, ensure_or_recreate_collection, upsert_chunks, search
 from .prompt import build_rag_context, make_prompt_chat
 from .llm import load_llm, generate_answer
-from .vLLM import VLLMClient   # ✅ vLLM 클라이언트
+from .vLLM import VLLMClient   
 
+import logging
+logger = logging.getLogger("rag.pipeline")
 
 class RAGPipeline:
     def __init__(
@@ -24,9 +26,6 @@ class RAGPipeline:
         self.embed_cfg = embed_cfg
         self.llm_cfg = llm_cfg
 
-        # -----------------------------
-        # 1) Embedder / Qdrant 초기화
-        # -----------------------------
         self.embedder = SentenceTransformer(
             embed_cfg.model_name,
             trust_remote_code=embed_cfg.trust_remote_code,
@@ -40,9 +39,6 @@ class RAGPipeline:
             qdrant_cfg.recreate,
         )
 
-        # -----------------------------
-        # 2) LLM 백엔드 선택 (HF vs vLLM)
-        # -----------------------------
         if self.llm_cfg.use_vllm:
             # vLLM(OpenAI 호환) 서버 호출용 클라이언트
             self.vllm_client = VLLMClient(self.llm_cfg)
@@ -76,6 +72,9 @@ class RAGPipeline:
 
     # 3) search
     def retrieve(self, query: str, topk: int = 3):
+        logger.info("[retrieve] query=%r | topk=%d", query[:200], topk)
+
+        t0 = time.time()
         hits = search(
             client=self.client,
             collection=self.qdrant_cfg.collection,
@@ -83,11 +82,22 @@ class RAGPipeline:
             query=query,
             topk=topk,
         )
+        t1 = time.time()
 
-        print(f"[RAG] query='{query}' → hits={len(hits)}")
+        logger.info(
+            "[retrieve] done | hits=%d | collection=%s | elapsed=%.3fs",
+            len(hits),
+            self.qdrant_cfg.collection,
+            t1 - t0,
+        )
+
         if hits:
-            print("[RAG] first payload:", hits[0].payload.get("text", "")[:200])
+            logger.debug(
+                "[retrieve] first payload preview: %r",
+                hits[0].payload.get("text", "")[:200],
+            )
         return hits
+
     # 4) build context + LLM generate (RAG)
     #    → (answer, rag_ctx, stats) 반환
     def answer_rag(
@@ -98,10 +108,21 @@ class RAGPipeline:
         max_each: int = 800,
         max_context_chars: int = 3000,
     ):
+        
+        logger.info(
+            "[answer_rag] start | max_chunks=%d | max_each=%d | max_context_chars=%d",
+            max_chunks,
+            max_each,
+            max_context_chars,
+        )
         rag_ctx = build_rag_context(
             hits,
             max_chunks=max_chunks,
             max_each=max_each,
+        )
+        logger.debug(
+            "[answer_rag] rag_ctx preview: %r",
+            rag_ctx[:300],
         )
         messages = make_prompt_chat(
             query=query,
@@ -132,16 +153,19 @@ class RAGPipeline:
         llm_latency = t1 - t0
 
         stats = {
-            "llm_backend": llm_backend,                     # "hf" or "vllm"
-            "llm_latency": llm_latency,                     # 초 단위
+            "llm_backend": llm_backend,                     
+            "llm_latency": llm_latency,                  
             "max_new_tokens": self.llm_cfg.max_new_tokens,
             "do_sample": self.llm_cfg.do_sample,
         }
-
+        logger.info(
+            "[answer_rag] done | backend=%s | llm_latency=%.3fs",
+            stats.llm_backend,
+            stats.llm_latency,
+        )
         return answer, rag_ctx, stats
 
     # 5) No-RAG (context 없이 질문만)
-    #    → 여기서는 일단 answer만 리턴 유지 (필요하면 stats도 추가 가능)
     def answer_no_rag(self, query: str):
         messages = make_prompt_chat(query=query, rag=None)
 
