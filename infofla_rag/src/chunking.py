@@ -28,17 +28,19 @@ def build_splitter(chunk_size: int, chunk_overlap: int, seps: Optional[List[str]
         separators=seps,
     )
 
+from .schemas import Chunk
+
 def chunk_dir_to_list(
     src_dir: str,
     chunk_size: int = 2000,
     chunk_overlap: int = 500,
     strip_brackets: bool = True,
     pattern: str = "*.txt",
-) -> List[Dict]:
+) -> List[Chunk]:
     files = sorted(glob.glob(os.path.join(src_dir, pattern)))
     splitter = build_splitter(chunk_size, chunk_overlap)
 
-    records: List[Dict] = []
+    records: List[Chunk] = []
     for fpath in files:
         with open(fpath, "r", encoding="utf-8") as f:
             content = f.read()
@@ -55,12 +57,12 @@ def chunk_dir_to_list(
                 for c in parts if c and c.strip()
             ]
             for c in final_parts:
-                records.append({
-                    "source_path": os.path.abspath(fpath),
-                    "source_name": os.path.basename(fpath),
-                    "chunk_index": cidx,
-                    "text": c,
-                })
+                records.append(Chunk(
+                    source_path=os.path.abspath(fpath),
+                    source_name=os.path.basename(fpath),
+                    chunk_index=cidx,
+                    text=c,
+                ))
                 cidx += 1
 
     return records

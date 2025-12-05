@@ -1,5 +1,5 @@
 # app/api.py
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from src.qdrant import ensure_or_recreate_collection
 import logging
 from src.logging_config import setup_logging
 
+from functools import lru_cache
 
 setup_logging()
 logger = logging.getLogger("rag.api")
@@ -49,17 +50,20 @@ llm_cfg = LLMConfig(
     vllm_api_base=os.getenv("VLLM_API_BASE", "http://vllm:8000"),
 )
 
-pipe = RAGPipeline(
-    chunk_cfg=chunk_cfg,
-    qdrant_cfg=qdrant_cfg,
-    embed_cfg=embed_cfg,
-    llm_cfg=llm_cfg,
-)
-
 INDEX_SRC_DIR_DEFAULT = os.getenv(
     "INDEX_SRC_DIR",
     "/app/data/news_articles_preprocessing",
 )
+
+@lru_cache
+def get_pipeline() -> RAGPipeline:
+    logger.info("Initializing RAGPipeline...")
+    return RAGPipeline(
+        chunk_cfg=chunk_cfg,
+        qdrant_cfg=qdrant_cfg,
+        embed_cfg=embed_cfg,
+        llm_cfg=llm_cfg,
+    )
 
 class RAGRequest(BaseModel):
     query: str
@@ -119,6 +123,7 @@ async def chat(
     query: str = Form(...),
     use_rag: bool = Form(False),
     topk: int = Form(3),
+    pipe: RAGPipeline = Depends(get_pipeline),  
 ):
     t0 = time.time()
     answer = ""
@@ -137,24 +142,18 @@ async def chat(
                 max_chunks=3,
                 max_each=800,
             )
-            if len(result) == 3:
-                ans, ctx, stats = result
-                backend = stats.llm_backend
-                llm_latency_ms = stats.llm_latency * 1000
-            else:
-                ans, ctx = result
-            answer = ans
-            rag_ctx = ctx
+            answer = result.answer
+            rag_ctx = result.context
+            if result.stats:
+                backend = result.stats.llm_backend
+                llm_latency_ms = result.stats.llm_latency * 1000
         else:
             result = pipe.answer_no_rag(query)
-            if isinstance(result, tuple) and len(result) == 2:
-                ans, stats = result
-                backend = stats.llm_backend
-                llm_latency_ms = stats.llm_latency * 1000
-            else:
-                ans = result
-            answer = ans
-            rag_ctx = None
+            answer = result.answer
+            rag_ctx = result.context
+            if result.stats:
+                backend = result.stats.llm_backend
+                llm_latency_ms = result.stats.llm_latency * 1000
 
         t1 = time.time()
         total_latency_ms = (t1 - t0) * 1000
@@ -180,7 +179,10 @@ async def chat(
 
 
 @app.post("/rag", response_model=RAGResponse)
-def rag_endpoint(req: RAGRequest):
+def rag_endpoint(
+    req: RAGRequest,
+    pipe : RAGPipeline = Depends(get_pipeline)
+    ):
     t0 = time.time()
     logger.info(
         "[/rag] request received | query=%r | use_rag=%s | topk=%d",
@@ -198,26 +200,24 @@ def rag_endpoint(req: RAGRequest):
                 max_chunks=3,
                 max_each=800,
             )
-            if len(result) == 3:
-                answer, rag_ctx, stats = result
-                backend = stats.llm_backend
-                llm_latency = stats.llm_latency
+            answer = result.answer
+            rag_ctx = result.context
+            if result.stats:
+                backend = result.stats.llm_backend
+                llm_latency = result.stats.llm_latency
             else:
-                answer, rag_ctx = result
                 backend = "unknown"
                 llm_latency = (time.time() - t0)
         else:
             result = pipe.answer_no_rag(req.query)
-            if isinstance(result, tuple) and len(result) == 2:
-                answer, stats = result
-                backend = stats.llm_backend
-                llm_latency = stats.llm_latency
-                rag_ctx = None
+            answer = result.answer
+            rag_ctx = result.context
+            if result.stats:
+                backend = result.stats.llm_backend
+                llm_latency = result.stats.llm_latency
             else:
-                answer = result
                 backend = "unknown"
                 llm_latency = (time.time() - t0)
-                rag_ctx = None
 
         t1 = time.time()
         total_latency = t1 - t0
@@ -239,11 +239,13 @@ def rag_endpoint(req: RAGRequest):
 
     except Exception:
         logger.exception("[/rag] unhandled exception")
-        # FastAPI가 적절한 500 응답을 만들 수 있게 예외 다시 던짐
         raise
 
 @app.post("/admin/build_index", response_model=IndexResponse)
-def build_index_endpoint(req: IndexRequest):
+def build_index_endpoint(
+        req: IndexRequest,
+        pipe: RAGPipeline = Depends(get_pipeline)
+    ):
     src_dir = req.src_dir or INDEX_SRC_DIR_DEFAULT
     logger.info(
         "[/admin/build_index] start | src_dir=%s | pattern=%s | recreate=%s",

@@ -1,0 +1,143 @@
+<!-- app/templates/index.html -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>InfoFla RAG Demo</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 16px;
+      line-height: 1.5;
+    }
+    h1 {
+      margin-bottom: 8px;
+    }
+    .meta {
+      color: #666;
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+    }
+    textarea, input[type="text"], input[type="number"] {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-family: inherit;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: none;
+      background: #2563eb;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    .row {
+      margin-top: 16px;
+    }
+    .label {
+      font-weight: 600;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .answer, .context, .error, .stats {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+    }
+    .answer {
+      background: #f1f5f9;
+    }
+    .context {
+      background: #f9fafb;
+      font-size: 0.9rem;
+      border: 1px dashed #cbd5f5;
+    }
+    .error {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .stats {
+      font-size: 0.85rem;
+      color: #4b5563;
+    }
+    .inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-right: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>InfoFla RAG 데모</h1>
+  <div class="meta">
+    Backend: <strong>{{ backend }}</strong> |
+    Docs: <a href="/docs" target="_blank">/docs</a> |
+    Health: <a href="/health" target="_blank">/health</a>
+  </div>
+
+  <form method="post" action="/chat">
+    <div class="row">
+      <label class="label" for="query">질문</label>
+      <textarea id="query" name="query" rows="4" placeholder="질문을 입력하세요. (예: infofla 셀토 알려줘)">{{ query }}</textarea>
+    </div>
+
+    <div class="row">
+      <span class="inline">
+        <input type="checkbox" id="use_rag" name="use_rag" value="on"
+          {% if use_rag %}checked{% endif %}>
+        <label for="use_rag">RAG 사용</label>
+      </span>
+
+      <span class="inline">
+        <label for="topk">Top-k:</label>
+        <input type="number" id="topk" name="topk" min="1" max="10" value="{{ topk }}">
+      </span>
+    </div>
+
+    <div class="row">
+      <button type="submit">질문 보내기</button>
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="error">
+      <strong>에러 발생:</strong><br>
+      {{ error }}
+    </div>
+  {% endif %}
+
+  {% if answer %}
+    <div class="answer">
+      <strong>답변</strong><br>
+      {{ answer }}
+    </div>
+  {% endif %}
+
+  {% if context %}
+    <div class="context">
+      <strong>RAG 컨텍스트</strong><br>
+      {{ context }}
+    </div>
+  {% endif %}
+
+  {% if llm_latency_ms is not none %}
+    <div class="stats">
+      LLM latency: {{ "%.1f"|format(llm_latency_ms) }} ms<br>
+      Total latency: {{ "%.1f"|format(total_latency_ms) }} ms
+    </div>
+  {% endif %}
+</body>
+</html>

@@ -24,14 +24,16 @@ def ensure_or_recreate_collection(client: QdrantClient, collection: str, dim: in
             )
 
 
+from .schemas import Chunk
+
 def upsert_chunks(
     client: QdrantClient,
     collection: str,
     embedder: SentenceTransformer,
-    chunks: List[Dict],
+    chunks: List[Chunk],
     batch_size: int = 256,
 ):
-    texts = [c["text"] for c in chunks]
+    texts = [c.text for c in chunks]
     vectors = embedder.encode(texts, show_progress_bar=True, batch_size=batch_size).tolist()
 
     points = [
@@ -41,9 +43,9 @@ def upsert_chunks(
             payload={
                 "text": texts[i],
                 "idx": i,
-                "source_path": chunks[i]["source_path"],
-                "source_name": chunks[i]["source_name"],
-                "chunk_index": chunks[i]["chunk_index"],
+                "source_path": chunks[i].source_path,
+                "source_name": chunks[i].source_name,
+                "chunk_index": chunks[i].chunk_index,
             },
         )
         for i in range(len(texts))

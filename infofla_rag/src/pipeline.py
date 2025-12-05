@@ -1,4 +1,5 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
+from .schemas import Chunk, RAGResult, GenerationStats
 import time
 
 from sentence_transformers import SentenceTransformer
@@ -51,7 +52,7 @@ class RAGPipeline:
             self.vllm_client = None
 
     # 1) chunking → memory
-    def chunk(self, src_dir: str, pattern: str = "*.txt") -> List[Dict]:
+    def chunk(self, src_dir: str, pattern: str = "*.txt") -> List[Chunk]:
         return chunk_dir_to_list(
             src_dir=src_dir,
             chunk_size=self.chunk_cfg.chunk_size,
@@ -61,7 +62,7 @@ class RAGPipeline:
         )
 
     # 2) upsert
-    def upsert(self, chunks: List[Dict]):
+    def upsert(self, chunks: List[Chunk]):
         upsert_chunks(
             client=self.client,
             collection=self.qdrant_cfg.collection,
@@ -152,31 +153,38 @@ class RAGPipeline:
         t1 = time.time()
         llm_latency = t1 - t0
 
-        stats = {
-            "llm_backend": llm_backend,                     
-            "llm_latency": llm_latency,                  
-            "max_new_tokens": self.llm_cfg.max_new_tokens,
-            "do_sample": self.llm_cfg.do_sample,
-        }
+        stats = GenerationStats(
+            llm_backend=llm_backend,
+            llm_latency=llm_latency,
+            max_new_tokens=self.llm_cfg.max_new_tokens,
+            do_sample=self.llm_cfg.do_sample,
+        )
         logger.info(
             "[answer_rag] done | backend=%s | llm_latency=%.3fs",
             stats.llm_backend,
             stats.llm_latency,
         )
-        return answer, rag_ctx, stats
+        return RAGResult(
+            answer=answer,
+            context=rag_ctx,
+            stats=stats,
+        )
 
     # 5) No-RAG (context 없이 질문만)
-    def answer_no_rag(self, query: str):
+    def answer_no_rag(self, query: str) -> RAGResult:
         messages = make_prompt_chat(query=query, rag=None)
 
+        t0 = time.time()
         if self.llm_cfg.use_vllm:
-            return self.vllm_client.chat(
+            llm_backend = "vllm"
+            answer = self.vllm_client.chat(
                 messages,
                 max_new_tokens=self.llm_cfg.max_new_tokens,
                 do_sample=self.llm_cfg.do_sample,
             )
         else:
-            return generate_answer(
+            llm_backend = "hf"
+            answer = generate_answer(
                 self.model,
                 self.tokenizer,
                 self.gen_cfg,
@@ -184,3 +192,17 @@ class RAGPipeline:
                 max_new_tokens=self.llm_cfg.max_new_tokens,
                 do_sample=self.llm_cfg.do_sample,
             )
+        t1 = time.time()
+        llm_latency = t1 - t0
+
+        stats = GenerationStats(
+            llm_backend=llm_backend,
+            llm_latency=llm_latency,
+            max_new_tokens=self.llm_cfg.max_new_tokens,
+            do_sample=self.llm_cfg.do_sample,
+        )
+        return RAGResult(
+            answer=answer,
+            context=None,
+            stats=stats,
+        )
