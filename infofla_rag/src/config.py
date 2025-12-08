@@ -17,7 +17,7 @@ class LLMConfig(BaseModel):
     do_sample: bool = False
     temperature: float = 0.2
     use_vllm: bool = False
-    vllm_api_base: str = "http://localhost:8000"
+    vllm_api_base: str = "http://localhost:8001"
 
 class ChunkConfig(BaseModel):
     chunk_size: int = 2000

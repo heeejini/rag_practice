@@ -1,0 +1,62 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Data and cache (이미 볼륨으로 마운트되므로 제외)
+vllm_cache/
+*.cache
+.cache/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Documentation
+*.md
+docs/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+

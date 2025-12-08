@@ -21,6 +21,66 @@ logger = logging.getLogger("rag.api")
 
 app = FastAPI(title="InfoFla RAG API", version="1.0.0")
 
+
+@app.on_event("startup")
+async def startup_event():
+    """앱 시작 시 자동으로 인덱스 빌드 (컬렉션이 비어있을 경우)"""
+    try:
+        pipe = get_pipeline()
+        
+        # 컬렉션 상태 확인
+        try:
+            collection_info = pipe.client.get_collection(qdrant_cfg.collection)
+            points_count = collection_info.points_count
+            
+            if points_count == 0:
+                logger.info(
+                    "[startup] Collection is empty, building index automatically | "
+                    "collection=%s | src_dir=%s",
+                    qdrant_cfg.collection,
+                    INDEX_SRC_DIR_DEFAULT,
+                )
+                
+                if os.path.isdir(INDEX_SRC_DIR_DEFAULT):
+                    chunks = pipe.chunk(src_dir=INDEX_SRC_DIR_DEFAULT, pattern="*.txt")
+                    n_chunks = len(chunks)
+                    
+                    if n_chunks > 0:
+                        pipe.upsert(chunks)
+                        logger.info(
+                            "[startup] Index built successfully | indexed_chunks=%d",
+                            n_chunks,
+                        )
+                    else:
+                        logger.warning(
+                            "[startup] No chunks found in %s",
+                            INDEX_SRC_DIR_DEFAULT,
+                        )
+                else:
+                    logger.warning(
+                        "[startup] Source directory not found: %s",
+                        INDEX_SRC_DIR_DEFAULT,
+                    )
+            else:
+                logger.info(
+                    "[startup] Collection already has data | collection=%s | points=%d",
+                    qdrant_cfg.collection,
+                    points_count,
+                )
+        except Exception as e:
+            # 컬렉션이 없거나 접근 불가능한 경우
+            logger.warning(
+                "[startup] Could not check collection status: %s. "
+                "Index will need to be built manually.",
+                str(e),
+            )
+    except Exception as e:
+        logger.error(
+            "[startup] Failed to initialize pipeline or build index: %s",
+            str(e),
+            exc_info=True,
+        )
+
 templates = Jinja2Templates(directory="app/templates")
 
 chunk_cfg = ChunkConfig(
@@ -139,7 +199,7 @@ async def chat(
             result = pipe.answer_rag(
                 query,
                 hits,
-                max_chunks=3,
+                max_chunks=topk,
                 max_each=800,
             )
             answer = result.answer
@@ -197,7 +257,7 @@ def rag_endpoint(
             result = pipe.answer_rag(
                 req.query,
                 hits,
-                max_chunks=3,
+                max_chunks=req.topk,
                 max_each=800,
             )
             answer = result.answer

@@ -1,6 +1,24 @@
+import os
+import requests
+import pytest
 from fastapi.testclient import TestClient
 
+import warnings
+
 from app.api import app, get_pipeline
+from src.schemas import RAGResult, GenerationStats
+
+# Suppress known deprecation warnings from FastAPI / Starlette during tests
+warnings.filterwarnings(
+    "ignore",
+    message=".*on_event is deprecated.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*first parameter should be the Request instance.*",
+    category=DeprecationWarning,
+)
 
 
 class DummyStats:
@@ -14,14 +32,28 @@ class DummyPipe:
         return [{"id": "1", "score": 1.0, "text": "dummy context"}]
 
     def answer_rag(self, query, hits, max_chunks=3, max_each=800, max_context_chars=3000):
-        answer = f"dummy answer for: {query}"
-        rag_ctx = "dummy context"
-        stats = DummyStats()
-        return answer, rag_ctx, stats
+        return RAGResult(
+            answer=f"dummy answer for: {query}",
+            context="dummy context",
+            stats=GenerationStats(
+                llm_backend="vllm",
+                llm_latency=0.123,
+                max_new_tokens=256,
+                do_sample=False,
+            ),
+        )
 
     def answer_no_rag(self, query: str):
-        answer = f"no rag answer for: {query}"
-        return answer
+        return RAGResult(
+            answer=f"no rag answer for: {query}",
+            context=None,
+            stats=GenerationStats(
+                llm_backend="vllm",
+                llm_latency=0.123,
+                max_new_tokens=256,
+                do_sample=False,
+            ),
+        )
 
 
 client = TestClient(app)
@@ -102,3 +134,50 @@ def test_health_endpoint():
     data = resp.json()
     assert data["status"] == "ok"
     assert data["backend"] in ("hf", "vllm")
+
+
+# ------------ Live service checks (optional integration) ------------
+
+def _skip_if_unreachable(url: str, exc: Exception):
+    pytest.skip(f"Service unreachable at {url}: {exc}")
+
+
+def test_live_rag_server_alive():
+    """실제 rag 서버(9000) 헬스 체크"""
+    url = os.getenv("RAG_HEALTH_URL", "http://localhost:9000/health")
+    try:
+        resp = requests.get(url, timeout=5)
+    except Exception as exc:
+        _skip_if_unreachable(url, exc)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("status") == "ok"
+
+
+def test_live_vllm_server_alive():
+    """실제 vLLM 서버(8001) 헬스 체크"""
+    url = os.getenv("VLLM_HEALTH_URL", "http://localhost:8001/health")
+    try:
+        resp = requests.get(url, timeout=5)
+    except Exception as exc:
+        _skip_if_unreachable(url, exc)
+    assert resp.status_code == 200
+    # vLLM의 /health는 단순 문자열 또는 JSON을 반환할 수 있음
+    try:
+        data = resp.json()
+        assert data is not None
+    except Exception:
+        # JSON이 아니더라도 200 OK면 통과
+        assert resp.text is not None
+
+
+def test_live_qdrant_server_alive():
+    """실제 Qdrant 서버(6335) 헬스 체크"""
+    url = os.getenv("QDRANT_HEALTH_URL", "http://localhost:6335/collections")
+    try:
+        resp = requests.get(url, timeout=5)
+    except Exception as exc:
+        _skip_if_unreachable(url, exc)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("status") == "ok"
