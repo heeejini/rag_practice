@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List
 from .schemas import Chunk, RAGResult, GenerationStats
 import time
 
