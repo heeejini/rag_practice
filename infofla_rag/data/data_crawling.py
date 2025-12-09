@@ -13,7 +13,7 @@ import os
 import re
 import time
 import atexit
-
+import json 
 class DualLogger:
     def __init__(self, filename: str):
         self._orig_stdout = sys.stdout
@@ -258,16 +258,19 @@ def main():
             print(preview if preview else "본문을 찾을 수 없습니다.")
 
             # 저장
-            fname = f"{slugify(it['title'])}.txt"
+            fname = f"{slugify(it['title'])}.jsonl"
             fpath = os.path.join(SAVE_DIR, fname)
-            with open(fpath, "w", encoding="utf-8") as f:
-                f.write(f"제목: {it['title']}\n")
-                f.write(f"요약: {it['desc']}\n")
-                f.write(f"링크: {it['link']}\n\n")
-                f.write("본문:\n")
-                f.write(body if body else "본문을 찾을 수 없습니다.")
-            print(f"💾 저장 완료: {fpath}")
+            record = {
+                "title": it["title"],
+                "summary": it["desc"],
+                "link": it["link"],
+                "body": body if body else ""
+            }
 
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+            print(f"💾 저장 완료: {fpath}")
             # 다음 기사에 영향 없게 정리
             try:
                 driver.execute_script("window.stop();")
