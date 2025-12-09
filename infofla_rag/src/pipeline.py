@@ -52,7 +52,7 @@ class RAGPipeline:
             self.vllm_client = None
 
     # 1) chunking → memory
-    def chunk(self, src_dir: str, pattern: str = "*.txt") -> List[Chunk]:
+    def chunk(self, src_dir: str, pattern: str = "*.jsonl") -> List[Chunk]:
         return chunk_dir_to_list(
             src_dir=src_dir,
             chunk_size=self.chunk_cfg.chunk_size,

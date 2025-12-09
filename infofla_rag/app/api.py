@@ -1,19 +1,18 @@
 # app/api.py
-from fastapi import FastAPI, Request, Form, HTTPException, Depends
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-import time
 import os
+import time
+import logging
+from functools import lru_cache
+
+import gradio as gr
+from gradio.routes import mount_gradio_app
 
 from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
 from src.qdrant import ensure_or_recreate_collection
-
-import logging
 from src.logging_config import setup_logging
-
-from functools import lru_cache
 
 setup_logging()
 logger = logging.getLogger("rag.api")
@@ -80,8 +79,6 @@ async def startup_event():
             str(e),
             exc_info=True,
         )
-
-templates = Jinja2Templates(directory="app/templates")
 
 chunk_cfg = ChunkConfig(
     chunk_size=2000,
@@ -155,87 +152,6 @@ class IndexResponse(BaseModel):
 def health():
     backend = "vllm" if llm_cfg.use_vllm else "hf"
     return {"status": "ok", "backend": backend}
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    backend = "vllm" if llm_cfg.use_vllm else "hf"
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "query": "",
-            "answer": None,
-            "context": None,
-            "backend": backend,
-            "llm_latency_ms": None,
-            "total_latency_ms": None,
-            "use_rag": True,
-            "topk": 3,
-            "error": None,
-        },
-    )
-
-
-@app.post("/chat", response_class=HTMLResponse)
-async def chat(
-    request: Request,
-    query: str = Form(...),
-    use_rag: bool = Form(False),
-    topk: int = Form(3),
-    pipe: RAGPipeline = Depends(get_pipeline),  
-):
-    t0 = time.time()
-    answer = ""
-    rag_ctx = None
-    backend = "vllm" if llm_cfg.use_vllm else "hf"
-    llm_latency_ms = 0.0
-    total_latency_ms = 0.0
-    error = None
-
-    try:
-        if use_rag:
-            hits = pipe.retrieve(query, topk=topk)
-            result = pipe.answer_rag(
-                query,
-                hits,
-                max_chunks=topk,
-                max_each=800,
-            )
-            answer = result.answer
-            rag_ctx = result.context
-            if result.stats:
-                backend = result.stats.llm_backend
-                llm_latency_ms = result.stats.llm_latency * 1000
-        else:
-            result = pipe.answer_no_rag(query)
-            answer = result.answer
-            rag_ctx = result.context
-            if result.stats:
-                backend = result.stats.llm_backend
-                llm_latency_ms = result.stats.llm_latency * 1000
-
-        t1 = time.time()
-        total_latency_ms = (t1 - t0) * 1000
-
-    except Exception as e:
-        error = str(e)
-
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "query": query,
-            "answer": answer,
-            "context": rag_ctx,
-            "backend": backend,
-            "llm_latency_ms": llm_latency_ms,
-            "total_latency_ms": total_latency_ms,
-            "use_rag": use_rag,
-            "topk": topk,
-            "error": error,
-        },
-    )
 
 
 @app.post("/rag", response_model=RAGResponse)
@@ -365,3 +281,122 @@ def build_index_endpoint(
         src_dir=src_dir,
         recreate=req.recreate,
     )
+
+import time
+import gradio as gr
+from gradio.routes import mount_gradio_app
+def gradio_chat_fn(query: str, use_rag: bool, topk: int):
+    if not query.strip():
+        return "질문을 입력하세요.", "", ""
+
+    t0 = time.time()
+
+    # 🔥 여기서 파이프라인 인스턴스 가져오기
+    pipe = get_pipeline()
+
+    try:
+        if use_rag:
+            hits = pipe.retrieve(query, topk=topk)
+            result = pipe.answer_rag(
+                query=query,
+                hits=hits,
+                max_chunks=topk,
+                max_each=800,
+                max_context_chars=3000,
+            )
+            context = result.context or ""
+        else:
+            result = pipe.answer_no_rag(query)
+            context = ""
+
+        answer = result.answer
+        llm_latency_ms = result.stats.llm_latency * 1000.0 if result.stats else None
+        total_latency_ms = (time.time() - t0) * 1000.0
+
+        stats_text = ""
+        if llm_latency_ms is not None and total_latency_ms is not None:
+            stats_text = (
+                f"LLM latency: {llm_latency_ms:.1f} ms\n\n"
+                f"Total latency: {total_latency_ms:.1f} ms"
+            )
+
+        return answer, context, stats_text
+
+    except Exception as e:
+        return f"[에러] {e}", "", ""
+
+
+css_block = """
+<style>
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 16px;
+    line-height: 1.5;
+  }
+  h1 {
+    margin-bottom: 8px;
+  }
+  .meta {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+  }
+  .answer,
+  .context,
+  .stats {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+  }
+  .answer {
+    background: #f1f5f9;
+  }
+  .context {
+    background: #f9fafb;
+    font-size: 0.9rem;
+    border: 1px dashed #cbd5f5;
+  }
+  .stats {
+    font-size: 0.85rem;
+    color: #4b5563;
+  }
+</style>
+"""
+
+gradio_demo = gr.Blocks(title="InfoFla RAG Demo ver.1")
+
+with gradio_demo:
+    gr.HTML(css_block)
+    gr.HTML("""
+    <h1>InfoFla RAG 데모</h1>
+    <div class="meta">
+      Backend: <strong>vLLM / HF</strong> |
+      API Docs: <a href="/docs" target="_blank">/docs</a> |
+      Health: <a href="/health" target="_blank">/health</a>
+    </div>
+    """)
+
+    query = gr.Textbox(
+        label="질문",
+        placeholder="질문을 입력하세요. (예: infofla 셀토 알려줘)",
+        lines=4,
+    )
+    use_rag = gr.Checkbox(label="RAG 사용", value=True)
+    topk = gr.Slider(label="Top-k", minimum=1, maximum=10, step=1, value=3)
+
+    submit_btn = gr.Button("질문 보내기")
+
+    answer_box = gr.Textbox(label="답변", interactive=False)
+    context_box = gr.Textbox(label="RAG 컨텍스트", interactive=False)
+    stats_box = gr.Markdown(label="통계")
+
+    submit_btn.click(
+        fn=gradio_chat_fn,
+        inputs=[query, use_rag, topk],
+        outputs=[answer_box, context_box, stats_box],
+    )
+
+app = mount_gradio_app(app, gradio_demo, path="/")

@@ -46,6 +46,7 @@ def upsert_chunks(
                 "source_path": chunks[i].source_path,
                 "source_name": chunks[i].source_name,
                 "chunk_index": chunks[i].chunk_index,
+                "metadata": chunks[i].metadata,
             },
         )
         for i in range(len(texts))

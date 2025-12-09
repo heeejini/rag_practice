@@ -1,12 +1,45 @@
-from typing import List, Dict
+from typing import List, Dict, Any
 
-def build_rag_context(hits, max_chunks=3, max_each=2000) -> str:
-    parts = []
-    for h in hits[:max_chunks]: # qdrant 에서 뽑은 , query 와 관련된 top n 개 문서만 추출 
-        t = h.payload.get("text", "")
-        if t:
-            parts.append(t[:max_each].strip())
-    return "---\n".join(parts)
+def build_rag_context(hits, max_chunks: int = 3, max_each: int = 2000) -> str:
+    """
+    Qdrant에서 가져온 hits를 바탕으로
+    [문서 번호] + (제목/출처/요약) + 본문 일부를 하나의 문자열로 만든다.
+    이 문자열은 그대로 프롬프트와 UI에 같이 사용된다.
+    """
+    parts: List[str] = []
+
+    for rank, h in enumerate(hits[:max_chunks], 1):
+        payload: Dict[str, Any] = getattr(h, "payload", {}) or {}
+        meta: Dict[str, Any] = payload.get("metadata") or {}
+
+        text = payload.get("text", "") or ""
+        if not text.strip():
+            continue
+
+        # title / link / summary 는 top-level 또는 metadata 안에서 가져오도록 둘 다 지원
+        title = payload.get("title") or meta.get("title")
+        link = payload.get("link") or meta.get("link")
+
+        lines: List[str] = []
+
+        # 헤더
+        lines.append(f"[문서 {rank}]")
+        if title:
+            lines.append(f"제목: {title}")
+        if link:
+            lines.append(f"출처: {link}")
+
+        lines.append("")  # 빈 줄
+
+        # 본문 청크
+        body_snippet = text[:max_each].strip()
+        lines.append("본문:")
+        lines.append(body_snippet)
+
+        parts.append("\n".join(lines))
+
+    # 문서 사이 구분선
+    return "\n\n---\n\n".join(parts)
 
 def make_prompt_chat(query: str, rag: str | None = None, max_context_chars: int = 3000) -> List[Dict]:
     ref = (rag or "").strip()
