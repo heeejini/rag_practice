@@ -86,7 +86,7 @@ async def startup_event():
         )
 
 chunk_cfg = ChunkConfig(
-    chunk_size=2000,
+    chunk_size=1000,
     overlap=500,
     strip_brackets=True,
 )
