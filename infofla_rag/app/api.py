@@ -7,6 +7,7 @@ import logging
 from functools import lru_cache
 
 import gradio as gr
+import re
 
 from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
@@ -362,12 +363,16 @@ async def upload_doc_endpoint(
             detail="추출된 텍스트가 비어 있습니다.",
         )
 
-    # 3) 텍스트를 청크로 분할 → Chunk 리스트 생성
+    # 🔥 PDF 줄바꿈 전처리 적용
+    full_text = normalize_paragraphs(full_text)
+
+    # 3) 텍스트를 청크로 분할
     text_chunks = split_text_to_chunks(
         full_text,
         chunk_size=pipe.chunk_cfg.chunk_size,
         overlap=pipe.chunk_cfg.overlap,
     )
+
 
     chunks: list[Chunk] = []
     for idx, ch in enumerate(text_chunks):
@@ -402,6 +407,26 @@ async def upload_doc_endpoint(
         num_chunks=len(chunks),
         collection=pipe.qdrant_cfg.collection,
     )
+
+
+def normalize_paragraphs(raw_text: str) -> str:
+    """PDF에서 잘못 분리된 줄바꿈을 고쳐 문장 단위로 합쳐주는 전처리."""
+    if not raw_text:
+        return ""
+
+    text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\n{3,}", "\n\n", text)  # 3줄 이상 개행 → 2줄
+
+    paragraphs = text.split("\n\n")
+    normalized = []
+
+    for p in paragraphs:
+        lines = [ln.strip() for ln in p.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        normalized.append(" ".join(lines))  # 문단 안에서 줄바꿈 제거 → 공백으로 연결
+
+    return "\n\n".join(normalized)
 
 
 def split_text_to_chunks(
@@ -538,36 +563,17 @@ with gr.Blocks(title="InfoFla RAG Demo 🤩") as gradio_demo:
 
         upload_output = gr.Textbox(label="결과", lines=5, interactive=False)
         def gradio_upload_fn(file):
-            import requests
-            import mimetypes
-            import os
-            import sys
-
-            print("[gradio_upload_fn] called with:", repr(file), file=sys.stderr)
+            import requests, mimetypes, os
 
             if file is None:
                 return "⚠️ 파일을 선택하세요."
 
-            # 리스트로 들어오는 경우 방어
-            if isinstance(file, list):
-                if not file:
-                    return "⚠️ 파일을 선택하세요."
-                file = file[0]
+            # file은 filepath (str)
+            filepath = file
+            filename = os.path.basename(filepath)
 
-            # 1) type="filepath" 인 경우: file은 문자열 경로
-            if isinstance(file, str):
-                filepath = file
-                filename = os.path.basename(filepath)
-            else:
-                # 2) NamedString 같은 객체로 들어오는 경우 대비
-                try:
-                    filename = getattr(file, "name", None) or "uploaded_file"
-                    filepath = getattr(file, "data", None) or getattr(file, "path", None)
-                except Exception as e:
-                    return f"⚠️ 업로드된 파일 정보를 읽을 수 없습니다: {e}"
-
-            if not filepath or not os.path.exists(filepath):
-                return f"⚠️ 파일 경로를 찾을 수 없습니다: {filepath}"
+            if not os.path.exists(filepath):
+                return f"⚠️ 파일을 찾을 수 없습니다: {filepath}"
 
             mime_type, _ = mimetypes.guess_type(filename)
             mime_type = mime_type or "application/octet-stream"
@@ -579,14 +585,15 @@ with gr.Blocks(title="InfoFla RAG Demo 🤩") as gradio_demo:
                     files = {"file": (filename, f, mime_type)}
                     resp = requests.post(url, files=files)
 
-                print("[gradio_upload_fn] /admin/upload_doc status:", resp.status_code, file=sys.stderr)
-
                 if resp.status_code == 200:
                     return f"✅ 업로드 성공!\n{resp.json()}"
                 else:
                     return f"❌ 오류 발생 ({resp.status_code})\n{resp.text}"
+
             except Exception as e:
                 return f"[예외 발생] {e}"
+
+
 
     upload_btn.click(
         fn=gradio_upload_fn,
