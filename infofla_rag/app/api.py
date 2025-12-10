@@ -7,7 +7,6 @@ import logging
 from functools import lru_cache
 
 import gradio as gr
-from gradio.routes import mount_gradio_app
 
 from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
@@ -20,6 +19,7 @@ logger = logging.getLogger("rag.api")
 
 app = FastAPI(title="InfoFla RAG API", version="1.0.0")
 
+MAX_QUERY_CHARS = int(os.getenv("MAX_QUERY_CHARS", "2000"))
 
 @app.on_event("startup")
 async def startup_event():
@@ -41,7 +41,7 @@ async def startup_event():
                 )
                 
                 if os.path.isdir(INDEX_SRC_DIR_DEFAULT):
-                    chunks = pipe.chunk(src_dir=INDEX_SRC_DIR_DEFAULT, pattern="*.txt")
+                    chunks = pipe.chunk(src_dir=INDEX_SRC_DIR_DEFAULT, pattern="*.jsonl")
                     n_chunks = len(chunks)
                     
                     if n_chunks > 0:
@@ -138,7 +138,7 @@ class RAGResponse(BaseModel):
 
 class IndexRequest(BaseModel):
     src_dir: str | None = None
-    pattern: str = "*.txt"
+    pattern: str = "*.jsonl"
     recreate: bool = False
 
 
@@ -166,7 +166,18 @@ def rag_endpoint(
         req.use_rag,
         req.topk,
     )
-
+    # 입력 길이 검사
+    if len(req.query) > MAX_QUERY_CHARS:
+        logger.warning(
+            "[/rag] query too long | length=%d | max=%d",
+            len(req.query),
+            MAX_QUERY_CHARS,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Query too long: {len(req.query)} characters. "
+                   f"Maximum allowed is {MAX_QUERY_CHARS}.",
+        )
     try:
         if req.use_rag:
             hits = pipe.retrieve(req.query, topk=req.topk)
@@ -281,17 +292,21 @@ def build_index_endpoint(
         src_dir=src_dir,
         recreate=req.recreate,
     )
-
-import time
-import gradio as gr
-from gradio.routes import mount_gradio_app
 def gradio_chat_fn(query: str, use_rag: bool, topk: int):
     if not query.strip():
         return "질문을 입력하세요.", "", ""
 
+    # 🔹 입력 길이 체크 + 잘라쓰기
+    notice = ""
+    if len(query) > MAX_QUERY_CHARS:
+        notice = (
+            f"[알림] 입력이 너무 길어서 앞 {MAX_QUERY_CHARS}자만 사용합니다. "
+            f"(원래 길이: {len(query)}자)\n\n"
+        )
+        query = query[:MAX_QUERY_CHARS]
+
     t0 = time.time()
 
-    # 🔥 여기서 파이프라인 인스턴스 가져오기
     pipe = get_pipeline()
 
     try:
@@ -320,59 +335,19 @@ def gradio_chat_fn(query: str, use_rag: bool, topk: int):
                 f"Total latency: {total_latency_ms:.1f} ms"
             )
 
-        return answer, context, stats_text
+        # 🔹 너무 길어서 잘랐으면 안내 문구를 답변 앞에 붙여주기
+        return notice + answer, context, stats_text
 
     except Exception as e:
         return f"[에러] {e}", "", ""
 
-
-css_block = """
-<style>
-  body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    max-width: 900px;
-    margin: 40px auto;
-    padding: 0 16px;
-    line-height: 1.5;
-  }
-  h1 {
-    margin-bottom: 8px;
-  }
-  .meta {
-    color: #666;
-    font-size: 0.9rem;
-    margin-bottom: 16px;
-  }
-  .answer,
-  .context,
-  .stats {
-    margin-top: 16px;
-    padding: 12px;
-    border-radius: 4px;
-    white-space: pre-wrap;
-  }
-  .answer {
-    background: #f1f5f9;
-  }
-  .context {
-    background: #f9fafb;
-    font-size: 0.9rem;
-    border: 1px dashed #cbd5f5;
-  }
-  .stats {
-    font-size: 0.85rem;
-    color: #4b5563;
-  }
-</style>
-"""
-
-gradio_demo = gr.Blocks(title="InfoFla RAG Demo ver.1")
-
-with gradio_demo:
-    gr.HTML(css_block)
+# 🔹 여기부터 Gradio UI 정의
+# ⚠️ Gradio 6에서는 theme 을 Blocks(...) 에 넣지 않고,
+#     mount_gradio_app 에 넘겨야 함
+with gr.Blocks(title="InfoFla RAG Demo 🤩") as gradio_demo:
     gr.HTML("""
     <h1>InfoFla RAG 데모</h1>
-    <div class="meta">
+    <div style="text-align: center; color: #64748b; font-size: 0.95rem; margin-bottom: 1rem;">
       Backend: <strong>vLLM / HF</strong> |
       API Docs: <a href="/docs" target="_blank">/docs</a> |
       Health: <a href="/health" target="_blank">/health</a>
@@ -384,14 +359,26 @@ with gradio_demo:
         placeholder="질문을 입력하세요. (예: infofla 셀토 알려줘)",
         lines=4,
     )
-    use_rag = gr.Checkbox(label="RAG 사용", value=True)
-    topk = gr.Slider(label="Top-k", minimum=1, maximum=10, step=1, value=3)
+
+    with gr.Row():
+        use_rag = gr.Checkbox(label="RAG 사용", value=True)
+        topk = gr.Slider(label="Top-k", minimum=1, maximum=10, step=1, value=3)
 
     submit_btn = gr.Button("질문 보내기")
 
-    answer_box = gr.Textbox(label="답변", interactive=False)
-    context_box = gr.Textbox(label="RAG 컨텍스트", interactive=False)
-    stats_box = gr.Markdown(label="통계")
+    answer_box = gr.Textbox(
+        label="답변",
+        interactive=False,
+        lines=10,
+    )
+
+    context_box = gr.Textbox(
+        label="RAG 컨텍스트",
+        interactive=False,
+        lines=12,
+    )
+
+    stats_box = gr.Markdown()  # label 없어도 됨
 
     submit_btn.click(
         fn=gradio_chat_fn,
@@ -399,4 +386,12 @@ with gradio_demo:
         outputs=[answer_box, context_box, stats_box],
     )
 
-app = mount_gradio_app(app, gradio_demo, path="/")
+
+# 🔹 FastAPI에 Gradio Mount (여기서 theme 적용)
+app = gr.mount_gradio_app(
+    app,
+    gradio_demo,
+    path="/",                        # 지금처럼 루트에 두려면 "/"
+    theme=gr.themes.Citrus(),         # ✅ Soft 테마 여기서 적용
+    footer_links=["api", "gradio", "settings"],  # 필요 없으면 [] 나 None 으로
+)
