@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
@@ -60,6 +60,7 @@ def search(
     embedder: SentenceTransformer,
     query: str,
     topk: int = 3,
+    score_threshold: Optional[float] = None,
 ):
 
     qvec = embedder.encode([query])[0].tolist()
@@ -85,7 +86,17 @@ def search(
             "qdrant-client 버전을 1.10.0 이상으로 업데이트 해주세요."
         )
 
+
     if hasattr(res, "points"):
-        return res.points  
+        points = res.points
     else:
-        return res       
+        points = res
+
+    # 🔹 score_threshold 적용 (COSINE 거리 → score는 0~1, 클수록 유사)
+    if score_threshold is not None:
+        points = [
+            p for p in points
+            if getattr(p, "score", None) is not None and p.score >= score_threshold
+        ]
+
+    return points

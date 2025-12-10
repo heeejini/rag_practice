@@ -161,10 +161,11 @@ def rag_endpoint(
     ):
     t0 = time.time()
     logger.info(
-        "[/rag] request received | query=%r | use_rag=%s | topk=%d",
+        "[/rag] request received | query=%r | use_rag=%s | topk=%d | score_threshold=%s",
         req.query[:200],  # 너무 길면 잘라서
         req.use_rag,
         req.topk,
+        str(req.score_threshold)
     )
     # 입력 길이 검사
     if len(req.query) > MAX_QUERY_CHARS:
@@ -186,6 +187,7 @@ def rag_endpoint(
                 hits,
                 max_chunks=req.topk,
                 max_each=800,
+                score_threshold=req.score_threshold,
             )
             answer = result.answer
             rag_ctx = result.context
