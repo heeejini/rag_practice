@@ -6,6 +6,7 @@ class Chunk(BaseModel):
     source_name: str
     chunk_index: int
     text: str
+    metadata: dict = {}
 
 class GenerationStats(BaseModel):
     llm_backend: str
