@@ -1,5 +1,5 @@
 # app/api.py
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel
 import os
 import time
@@ -12,6 +12,11 @@ from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from src.pipeline import RAGPipeline
 from src.qdrant import ensure_or_recreate_collection
 from src.logging_config import setup_logging
+
+from pathlib import Path
+import pdfplumber
+
+from src.schemas import Chunk
 
 setup_logging()
 logger = logging.getLogger("rag.api")
@@ -111,6 +116,11 @@ INDEX_SRC_DIR_DEFAULT = os.getenv(
     "INDEX_SRC_DIR",
     "/app/data/news_articles_preprocessing",
 )
+UPLOAD_DIR = os.getenv(
+    "UPLOAD_DIR",
+    "/app/data/uploads",   
+)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @lru_cache
 def get_pipeline() -> RAGPipeline:
@@ -126,6 +136,7 @@ class RAGRequest(BaseModel):
     query: str
     topk: int = 3
     use_rag: bool = True
+    score_threshold : float =0.65
 
 
 class RAGResponse(BaseModel):
@@ -161,11 +172,11 @@ def rag_endpoint(
     ):
     t0 = time.time()
     logger.info(
-        "[/rag] request received | query=%r | use_rag=%s | topk=%d | score_threshold=%s",
+        "[/rag] request received | query=%r | use_rag=%s | topk=%d | score_threshold=%f",
         req.query[:200],  # 너무 길면 잘라서
         req.use_rag,
         req.topk,
-        str(req.score_threshold)
+        req.score_threshold
     )
     # 입력 길이 검사
     if len(req.query) > MAX_QUERY_CHARS:
@@ -294,6 +305,130 @@ def build_index_endpoint(
         src_dir=src_dir,
         recreate=req.recreate,
     )
+class UploadResponse(BaseModel):
+    file_name: str
+    num_chunks: int
+    collection: str
+
+
+@app.post("/admin/upload_doc", response_model=UploadResponse)
+async def upload_doc_endpoint(
+    file: UploadFile = File(...),
+    pipe: RAGPipeline = Depends(get_pipeline),
+):
+    """사용자가 업로드한 PDF/TXT 파일을 인덱싱해서 Qdrant 컬렉션에 추가"""
+    filename = file.filename
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext not in [".pdf", ".txt"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 파일 형식입니다: {ext} (지원: .pdf, .txt)",
+        )
+
+    # 1) 파일 저장
+    save_path = Path(UPLOAD_DIR) / filename
+    try:
+        content = await file.read()
+        with open(save_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"파일 저장 중 오류 발생: {e}",
+        )
+
+    # 2) 텍스트 추출
+    try:
+        if ext == ".pdf":
+            texts = []
+            with pdfplumber.open(str(save_path)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ""
+                    texts.append(page_text)
+            full_text = "\n".join(texts)
+        else:  # .txt
+            full_text = save_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"텍스트 추출 중 오류 발생: {e}",
+        )
+
+    full_text = full_text.strip()
+    if not full_text:
+        raise HTTPException(
+            status_code=400,
+            detail="추출된 텍스트가 비어 있습니다.",
+        )
+
+    # 3) 텍스트를 청크로 분할 → Chunk 리스트 생성
+    text_chunks = split_text_to_chunks(
+        full_text,
+        chunk_size=pipe.chunk_cfg.chunk_size,
+        overlap=pipe.chunk_cfg.overlap,
+    )
+
+    chunks: list[Chunk] = []
+    for idx, ch in enumerate(text_chunks):
+        chunks.append(
+            Chunk(
+                text=ch,
+                source_path=str(save_path),
+                source_name=filename,
+                chunk_index=idx,
+                metadata={"uploaded": True},
+            )
+        )
+
+    # 4) Qdrant에 upsert
+    try:
+        pipe.upsert(chunks)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Qdrant upsert 중 오류 발생: {e}",
+        )
+
+    logger.info(
+        "[/admin/upload_doc] indexed uploaded file | file=%s | chunks=%d | collection=%s",
+        filename,
+        len(chunks),
+        pipe.qdrant_cfg.collection,
+    )
+
+    return UploadResponse(
+        file_name=filename,
+        num_chunks=len(chunks),
+        collection=pipe.qdrant_cfg.collection,
+    )
+
+
+def split_text_to_chunks(
+    text: str,
+    chunk_size: int = 2000,
+    overlap: int = 500,
+):
+    """긴 텍스트를 chunk_size / overlap 기준으로 잘라서 리스트로 반환"""
+    chunks = []
+    start = 0
+    n = len(text)
+
+    if n == 0:
+        return []
+
+    while start < n:
+        end = min(start + chunk_size, n)
+        chunk = text[start:end]
+        chunks.append(chunk)
+
+        if end == n:
+            break
+        # 다음 시작 위치: overlap만큼 겹치게
+        start = end - overlap if end - overlap > 0 else end
+
+    return chunks
+
 def gradio_chat_fn(query: str, use_rag: bool, topk: int):
     if not query.strip():
         return "질문을 입력하세요.", "", ""
@@ -388,8 +523,77 @@ with gr.Blocks(title="InfoFla RAG Demo 🤩") as gradio_demo:
         outputs=[answer_box, context_box, stats_box],
     )
 
+    with gr.Tab("문서 업로드"):
+        gr.Markdown("### PDF / TXT 문서를 업로드하여 RAG 인덱스에 추가할 수 있습니다.")
 
-# 🔹 FastAPI에 Gradio Mount (여기서 theme 적용)
+        upload_file = gr.File(
+            label="문서 업로드 (PDF 또는 TXT)",
+            file_types=[".pdf", ".txt"],
+            file_count="single",   
+            type="filepath", 
+        )
+
+        upload_btn = gr.Button("인덱싱 실행")
+
+
+        upload_output = gr.Textbox(label="결과", lines=5, interactive=False)
+        def gradio_upload_fn(file):
+            import requests
+            import mimetypes
+            import os
+            import sys
+
+            print("[gradio_upload_fn] called with:", repr(file), file=sys.stderr)
+
+            if file is None:
+                return "⚠️ 파일을 선택하세요."
+
+            # 리스트로 들어오는 경우 방어
+            if isinstance(file, list):
+                if not file:
+                    return "⚠️ 파일을 선택하세요."
+                file = file[0]
+
+            # 1) type="filepath" 인 경우: file은 문자열 경로
+            if isinstance(file, str):
+                filepath = file
+                filename = os.path.basename(filepath)
+            else:
+                # 2) NamedString 같은 객체로 들어오는 경우 대비
+                try:
+                    filename = getattr(file, "name", None) or "uploaded_file"
+                    filepath = getattr(file, "data", None) or getattr(file, "path", None)
+                except Exception as e:
+                    return f"⚠️ 업로드된 파일 정보를 읽을 수 없습니다: {e}"
+
+            if not filepath or not os.path.exists(filepath):
+                return f"⚠️ 파일 경로를 찾을 수 없습니다: {filepath}"
+
+            mime_type, _ = mimetypes.guess_type(filename)
+            mime_type = mime_type or "application/octet-stream"
+
+            url = "http://127.0.0.1:9000/admin/upload_doc"
+
+            try:
+                with open(filepath, "rb") as f:
+                    files = {"file": (filename, f, mime_type)}
+                    resp = requests.post(url, files=files)
+
+                print("[gradio_upload_fn] /admin/upload_doc status:", resp.status_code, file=sys.stderr)
+
+                if resp.status_code == 200:
+                    return f"✅ 업로드 성공!\n{resp.json()}"
+                else:
+                    return f"❌ 오류 발생 ({resp.status_code})\n{resp.text}"
+            except Exception as e:
+                return f"[예외 발생] {e}"
+
+    upload_btn.click(
+        fn=gradio_upload_fn,
+        inputs=[upload_file],
+        outputs=[upload_output],
+    )
+
 app = gr.mount_gradio_app(
     app,
     gradio_demo,
