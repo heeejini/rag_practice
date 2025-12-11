@@ -1,4 +1,5 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 
 def build_rag_context(hits, max_chunks: int = 3, max_each: int = 2000) -> str:
     """

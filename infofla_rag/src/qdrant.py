@@ -1,7 +1,10 @@
 from typing import List, Optional
+
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, PointStruct, VectorParams
 from sentence_transformers import SentenceTransformer
+
+from .schemas import Chunk
 
 
 def get_client(host: str, port: int) -> QdrantClient:
@@ -22,9 +25,6 @@ def ensure_or_recreate_collection(client: QdrantClient, collection: str, dim: in
                 collection_name=collection,
                 vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
             )
-
-
-from .schemas import Chunk
 
 def upsert_chunks(
     client: QdrantClient,

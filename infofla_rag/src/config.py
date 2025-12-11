@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class EmbedConfig(BaseModel):
     model_name: str = "Alibaba-NLP/gte-multilingual-base"
     batch_size: int = 256

@@ -1,17 +1,17 @@
-from typing import List
-from .schemas import Chunk, RAGResult, GenerationStats
+import logging
 import time
+from typing import List
 
 from sentence_transformers import SentenceTransformer
 
-from .config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
 from .chunking import chunk_dir_to_list
-from .qdrant import get_client, ensure_or_recreate_collection, upsert_chunks, search
+from .config import ChunkConfig, EmbedConfig, LLMConfig, QdrantConfig
+from .llm import generate_answer, load_llm
 from .prompt import build_rag_context, make_prompt_chat
-from .llm import load_llm, generate_answer
-from .vLLM import VLLMClient   
+from .qdrant import ensure_or_recreate_collection, get_client, search, upsert_chunks
+from .schemas import Chunk, GenerationStats, RAGResult
+from .vLLM import VLLMClient
 
-import logging
 logger = logging.getLogger("rag.pipeline")
 
 class RAGPipeline:

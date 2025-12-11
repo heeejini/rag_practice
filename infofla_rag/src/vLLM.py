@@ -1,6 +1,8 @@
 # llm_vllm.py
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 import requests
+
 from .config import LLMConfig
 
 

@@ -1,9 +1,13 @@
-import os
-import re
 import glob
 import json
-from typing import List, Dict, Optional
+import os
+import re
+from typing import Dict, List, Optional
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from .schemas import Chunk
+
 
 def split_by_paragraph(text: str) -> List[str]:
     # \n * 3 -> \n * 2 로 통잃
@@ -27,8 +31,6 @@ def build_splitter(chunk_size: int, chunk_overlap: int, seps: Optional[List[str]
         length_function=len,
         separators=seps,
     )
-
-from .schemas import Chunk
 
 def chunk_dir_to_list(
     src_dir: str,
