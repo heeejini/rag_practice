@@ -73,7 +73,12 @@ class RAGPipeline:
 
     # 3) search
     def retrieve(self, query: str, topk: int = 3, score_threshold: float = 0.65):
-        logger.info("[retrieve] query=%r | topk=%d", query[:200], topk, score_threshold)
+        logger.info(
+            "[retrieve] query=%r | topk=%d | score_threshold=%f",
+            query[:200],
+            topk,
+            score_threshold,
+        )
 
        # if score_threshold is not None:
        #     score_threshold = 0.5
