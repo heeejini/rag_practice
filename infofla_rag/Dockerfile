@@ -40,3 +40,5 @@ EXPOSE 9000
 # 4) uv run으로 FastAPI 실행
 # ------------------------------------------------------------
 CMD ["uv", "run", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "9000"]
+
+ENV PYTHONPATH=/app
