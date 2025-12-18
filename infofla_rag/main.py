@@ -4,7 +4,7 @@ import argparse
 import os
 import time
 
-from src.config import ChunkConfig, QdrantConfig, EmbedConfig, LLMConfig
+from src.config import ChunkConfig, EmbedConfig, LLMConfig, QdrantConfig
 from src.pipeline import RAGPipeline
 
 

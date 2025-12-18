@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """Qdrant 컬렉션 상태 확인 스크립트"""
 
-from qdrant_client import QdrantClient
 import sys
+
+from qdrant_client import QdrantClient
 
 # docker-compose의 qdrant는 포트 6335로 매핑되어 있지만, 
 # 컨테이너 내부에서는 6333을 사용하므로 호스트에서는 6335를 사용
@@ -54,7 +55,7 @@ def main():
                     except Exception as e:
                         print(f"   - 샘플 조회 실패: {e}")
                 else:
-                    print(f"   ⚠️  데이터가 없습니다!")
+                    print("   ⚠️  데이터가 없습니다!")
                 print()
                 
             except Exception as e:
@@ -63,7 +64,7 @@ def main():
     except Exception as e:
         print(f"❌ Qdrant 연결 실패: {e}")
         print(f"   호스트: {QDRANT_HOST}:{QDRANT_PORT}")
-        print(f"   컨테이너가 실행 중인지 확인하세요: docker ps | grep qdrant")
+        print("   컨테이너가 실행 중인지 확인하세요: docker ps | grep qdrant")
         sys.exit(1)
 
 if __name__ == "__main__":
