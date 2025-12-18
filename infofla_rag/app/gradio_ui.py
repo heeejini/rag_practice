@@ -82,7 +82,7 @@ def create_gradio_demo(
         mime_type = mime_type or "application/octet-stream"
 
         # FastAPI 업로드 엔드포인트
-        url = "http://127.0.0.1:9000/admin/upload_doc"
+        url = "http://127.0.0.1:9000/upload_doc"
 
         try:
             with open(file_path, "rb") as f:
@@ -101,10 +101,10 @@ def create_gradio_demo(
     # ------------------------
     # 3) Gradio Blocks + 탭 구성
     # ------------------------
-    with gr.Blocks(title="InfoFla RAG Demo 🤩") as demo:
+    with gr.Blocks(title="Infofla RAG Demo") as demo:
         gr.HTML(
             """
-        <h1>InfoFla RAG 데모</h1>
+        <h1>INFOFLA RAG 데모</h1>
         <div style="text-align: center; color: #64748b; font-size: 0.95rem; margin-bottom: 1rem;">
           Backend: <strong>vLLM / HF</strong> |
           API Docs: <a href="/docs" target="_blank">/docs</a> |

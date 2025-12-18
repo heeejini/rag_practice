@@ -1,12 +1,12 @@
 import os
-import requests
-import pytest
-from fastapi.testclient import TestClient
-
 import warnings
 
+import pytest
+import requests
+from fastapi.testclient import TestClient
+
 from app.api import app, get_pipeline
-from src.schemas import RAGResult, GenerationStats
+from src.schemas import GenerationStats, RAGResult
 
 # Suppress known deprecation warnings from FastAPI / Starlette during tests
 warnings.filterwarnings(

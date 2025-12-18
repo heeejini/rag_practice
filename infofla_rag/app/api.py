@@ -1,5 +1,5 @@
 # app/api.py
-import hashlib  # ⬅️ 추가
+import hashlib  
 import logging
 import os
 import time
@@ -31,7 +31,7 @@ setup_logging()
 logger = logging.getLogger("rag.api")
 
 
-app = FastAPI(title="InfoFla RAG API", version="1.0.0")
+app = FastAPI(title="INFOFLA RAG API", version="1.0.0")
 
 class RAGRequest(BaseModel):
     query: str
@@ -220,14 +220,14 @@ def rag_endpoint(
         logger.exception("[/rag] unhandled exception")
         raise
 
-@app.post("/admin/build_index", response_model=IndexResponse)
+@app.post("/build_index", response_model=IndexResponse)
 def build_index_endpoint(
         req: IndexRequest,
         pipe: RAGPipeline = Depends(get_pipeline)
     ):
     src_dir = req.src_dir or INDEX_SRC_DIR_DEFAULT
     logger.info(
-        "[/admin/build_index] start | src_dir=%s | pattern=%s | recreate=%s",
+        "[/build_index] start | src_dir=%s | pattern=%s | recreate=%s",
         src_dir,
         req.pattern,
         req.recreate,
@@ -235,7 +235,7 @@ def build_index_endpoint(
 
     if not os.path.isdir(src_dir):
         logger.error(
-            "[/admin/build_index] source directory not found: %s",
+            "[/build_index] source directory not found: %s",
             src_dir,
         )
         raise HTTPException(
@@ -252,7 +252,7 @@ def build_index_endpoint(
             recreate=True,
         )
         logger.info(
-            "[/admin/build_index] collection recreated | collection=%s | dim=%d",
+            "[/build_index] collection recreated | collection=%s | dim=%d",
             pipe.qdrant_cfg.collection,
             dim,
         )
@@ -262,7 +262,7 @@ def build_index_endpoint(
 
     if n_chunks == 0:
         logger.warning(
-            "[/admin/build_index] no chunks found | src_dir=%s | pattern=%s",
+            "[/build_index] no chunks found | src_dir=%s | pattern=%s",
             src_dir,
             req.pattern,
         )
@@ -274,7 +274,7 @@ def build_index_endpoint(
 
     pipe.upsert(chunks)
     logger.info(
-        "[/admin/build_index] finished | indexed_chunks=%d | src_dir=%s",
+        "[/build_index] finished | indexed_chunks=%d | src_dir=%s",
         n_chunks,
         src_dir,
     )
@@ -290,7 +290,7 @@ class UploadResponse(BaseModel):
     collection: str
 
 
-@app.post("/admin/upload_doc", response_model=UploadResponse)
+@app.post("/upload_doc", response_model=UploadResponse)
 async def upload_doc_endpoint(
     file: UploadFile = File(...),
     pipe: RAGPipeline = Depends(get_pipeline),
@@ -416,7 +416,7 @@ async def upload_doc_endpoint(
         )
 
     logger.info(
-        "[/admin/upload_doc] indexed uploaded file | file=%s | chunks=%d | collection=%s | file_hash=%s",
+        "[/upload_doc] indexed uploaded file | file=%s | chunks=%d | collection=%s | file_hash=%s",
         filename,
         len(chunks),
         pipe.qdrant_cfg.collection,
