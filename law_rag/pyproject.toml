@@ -1,0 +1,18 @@
+[project]
+name = "law_rag"
+version = "0.1.0"
+description = "Law RAG"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dotenv>=0.9.9",
+    "fastembed>=0.7.4",
+    "gradio>=6.0.1",
+    "numpy>=1.24.0",
+    "qdrant-client>=1.7.0",
+    "rank-bm25>=0.2.2",
+    "requests>=2.31.0",
+    "sentence-transformers>=5.2.0",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+]
